@@ -1,0 +1,317 @@
+---
+title: "MSDS692 Data Science Practicum"
+author: "Frederick Pletz"
+date: "6/20/2021"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+if (!require("RColorBrewer")) install.packages("RColorBrewer")
+if (!require("wordcloud")) install.packages("wordcloud")
+if (!require("tm")) install.packages("tm")
+if (!require("fastDummies")) install.packages("fastDummies")
+if (!require("caret")) install.packages("caret")
+if (!require("dplyr")) install.packages("dplyr")
+if (!require("ggplot2")) install.packages("ggplot2")
+if (!require("ISLR")) install.packages("ISLR")
+if (!require("tree")) install.packages("tree")
+if (!require("randomForest")) install.packages("randomForest")
+if (!require("data.table")) install.packages("data.table")
+if (!require("tidyr")) install.packages("tidyr")
+knitr::opts_chunk$set(echo = TRUE)
+library(RColorBrewer)
+library(wordcloud)
+library(tm)
+library(fastDummies)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(ISLR)
+library(tree)
+library(randomForest)
+library(data.table)
+library(tidyr)
+set.seed(42)
+```
+
+# Assignment 4 - Magic Power Curve
+
+Pulled data from https://mtgjson.com/
+
+Data Cleaning done in Excel for speed:
+o	Fixed incomplete data
+o	Removed cards with no availability in paper format
+o	Removed cards where hasContentWarning = 1
+o	Removed any card where isAlternative = 1 
+o	Removed all cards where type = [Vanguard, Scheme, Conspiracy, Plane, Phenomenon, Character, Planeswalker, Land, Basic Land, Land Creature, Artifact Land, Summon]
+o	Removed all cards where borderColor = [Gold, Silver]
+o	Removed all cards referencing “playing for ante”
+o	Where asciiName was not blank, replaced name with asciiName (removed non ascii characters)
+o	Removed all cards where layout was not equal to "normal"
+o	Added “X” for color and color identity to represent no-color (resolved blank values)
+o	Added date for each printing
+o	Removed spaces from multi-word keywords
+o	Changed “,” to “ ” to avoid issue with CSV import
+o Modified type field to better represent slimple data set
+o Created field for colored mana cost
+o Columns Kept: colorIdentiy, convertedManaCost, coloredManaCost, power, toughness, rarity, types, uuid, text, releaseDate
+
+Final csv included in project for download.
+
+```{r importData}
+#import the data - relative path, so if using make sure to download FinalCreatureData.csv and run the R script from the same location.
+data <- read.csv('FinalCreatureData.csv', strip.white=TRUE, header=TRUE, quote="\"")
+
+#convert data into a dataframe
+df <- data.frame(data)
+
+#turn keyword abilities in the text field and rarity into dummy variables for use in modeling
+df.dummy <- dummy_cols(df, select_columns = c("rarity", "text"), split=' ')
+df.dummy <- subset(df.dummy, select=-c(rarity,text,types,uuid,releaseDate,colorIdentity))
+```
+
+
+```{r glm}
+#test/train split
+train_index <- createDataPartition(df.dummy$convertedManaCost, p=0.7, list=FALSE)
+trainingData <- df.dummy[train_index,]
+testData  <- df.dummy[-train_index,]
+
+#general linear model using gaussian family
+mtg.glm <- glm(convertedManaCost ~ ., data = trainingData, family = "gaussian")
+
+#show summary of model
+summary(mtg.glm)
+
+#use model to predict the test values
+prediction <- predict(mtg.glm, testData)
+
+#create a data frame containing actual values and predicted values
+predictions <- data.frame(testData$convertedManaCost, prediction, testData$convertedManaCost-prediction)
+names(predictions) <- c("Actual", "Predicted", "Difference")
+
+#visualize Actual vs Predicted results with a linear model line to show fit
+g <- ggplot(predictions, aes(x=Actual, y=Predicted))
+
+g + geom_point() + 
+  geom_smooth(method="lm", se=F) + 
+  labs(subtitle="Expectation vs Reality", 
+       y="Predicted", 
+       x="Actual", 
+       title="Linear Model Results")
+
+#round predicted values (convertedManacost is an Int), then do a group count Actual vs Prediction, then format for visualization
+predictions.rounded <- data.frame(Grouped=interaction(testData$convertedManaCost, round(prediction), sep='x'), CT=1)
+predictions.rounded <- aggregate(predictions.rounded$CT, by=list(Category=predictions.rounded$Grouped), FUN=sum)
+predictions.rounded <- separate(data=predictions.rounded, col=Category, into=c("Actual", "Predicted"), sep="x")
+predictions.rounded <- transform(predictions.rounded, Actual = as.numeric(Actual), Predicted = as.numeric(Predicted))
+names(predictions.rounded) <- c("Actual", "Predicted", "CT")
+
+
+#visualize Actual vs Predicted using a heatmap
+g <- ggplot(predictions.rounded, aes(x=Actual, y=Predicted, fill=CT))
+
+g + geom_point() + geom_tile() +
+  scale_fill_gradient(low="green", high="red") +
+  labs(subtitle="Expectation vs Reality", 
+       y="Predicted", 
+       x="Actual", 
+       title="Linear Model Results (Rounded Predictions)")
+
+
+```
+Interesting results; some outliers, but generally the heatmap shows strong predictive capabilities.
+
+```{r Random Forest}
+#generate random forest model
+randomForest.mtg <- randomForest(convertedManaCost~., data=trainingData)
+
+#plot to determine best number of trees
+plot(randomForest.mtg)
+
+#plot shows best number of trees around 30, remodel with ntree=30
+randomForest.mtg <- randomForest(convertedManaCost~., data=trainingData, ntree=30)
+
+#show model results
+summary(randomForest.mtg)
+print(randomForest.mtg)
+plot(randomForest.mtg)
+
+#predict against test data using random forest model
+prediction <- predict(randomForest.mtg, testData)
+
+#create dataframe from predicted values
+predictions <- data.frame(testData$convertedManaCost, prediction)
+names(predictions) <- c("Actual", "Predicted")
+
+#plot random forest results with linear model to show fit
+g <- ggplot(predictions, aes(x=Actual, y=Predicted))
+
+g + geom_point() + 
+  geom_smooth(method="lm", se=F) + 
+  labs(subtitle="Expectation vs Reality", 
+       y="Predicted", 
+       x="Actual", 
+       title="Random Forest Results")
+
+#create heat map grouping dataframe for random forest model
+predictions.rounded <- data.frame(Grouped=interaction(testData$convertedManaCost, round(prediction), sep='x'), CT=1)
+predictions.rounded <- aggregate(predictions.rounded$CT, by=list(Category=predictions.rounded$Grouped), FUN=sum)
+predictions.rounded <- separate(data=predictions.rounded, col=Category, into=c("Actual", "Predicted"), sep="x")
+predictions.rounded <- transform(predictions.rounded, Actual = as.numeric(Actual), Predicted = as.numeric(Predicted))
+names(predictions.rounded) <- c("Actual", "Predicted", "CT")
+
+#plot heatmap
+g <- ggplot(predictions.rounded, aes(x=Actual, y=Predicted, fill=CT))
+
+g + geom_point() + geom_tile() +
+  scale_fill_gradient(low="green", high="red") +
+  labs(subtitle="Expectation vs Reality", 
+       y="Predicted", 
+       x="Actual", 
+       title="Random Forest (Rounded Predictions)")
+
+```
+
+
+
+```{r wordClouds}
+#Each section is the same except for the initial filter.
+#The steps are as follows:
+# 1 - filter to single color identity
+# 2 - generate text corpus from text & types
+# 3 - turn that into a wordcloud and visualize
+
+white <- df[ which(df$colorIdentity =='W'), ]
+
+white.text <- Corpus(VectorSource(white$text))
+tdm.white.text <- TermDocumentMatrix(white.text)
+matrix.white.text <- as.matrix(tdm.white.text)
+count.white.text <- sort(rowSums(matrix.white.text), decreasing=TRUE)
+df.white.text <- data.frame(word = names(count.white.text), freq=count.white.text)
+
+white.types <- Corpus(VectorSource(white$types))
+tdm.white.types <- TermDocumentMatrix(white.types)
+matrix.white.types <- as.matrix(tdm.white.types)
+count.white.types <- sort(rowSums(matrix.white.types), decreasing=TRUE)
+df.white.types <- data.frame(word = names(count.white.types), freq=count.white.types)
+
+wordcloud(words = df.white.text$word, freq = df.white.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.white.types$word, freq = df.white.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+blue <- df[ which(df$colorIdentity =='U'), ]
+
+blue.text <- Corpus(VectorSource(blue$text))
+tdm.blue.text <- TermDocumentMatrix(blue.text)
+matrix.blue.text <- as.matrix(tdm.blue.text)
+count.blue.text <- sort(rowSums(matrix.blue.text), decreasing=TRUE)
+df.blue.text <- data.frame(word = names(count.blue.text), freq=count.blue.text)
+
+blue.types <- Corpus(VectorSource(blue$types))
+tdm.blue.types <- TermDocumentMatrix(blue.types)
+matrix.blue.types <- as.matrix(tdm.blue.types)
+count.blue.types <- sort(rowSums(matrix.blue.types), decreasing=TRUE)
+df.blue.types <- data.frame(word = names(count.blue.types), freq=count.blue.types)
+
+wordcloud(words = df.blue.text$word, freq = df.blue.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.blue.types$word, freq = df.blue.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+black <- df[ which(df$colorIdentity =='B'), ]
+
+black.text <- Corpus(VectorSource(black$text))
+tdm.black.text <- TermDocumentMatrix(black.text)
+matrix.black.text <- as.matrix(tdm.black.text)
+count.black.text <- sort(rowSums(matrix.black.text), decreasing=TRUE)
+df.black.text <- data.frame(word = names(count.black.text), freq=count.black.text)
+
+black.types <- Corpus(VectorSource(black$types))
+tdm.black.types <- TermDocumentMatrix(black.types)
+matrix.black.types <- as.matrix(tdm.black.types)
+count.black.types <- sort(rowSums(matrix.black.types), decreasing=TRUE)
+df.black.types <- data.frame(word = names(count.black.types), freq=count.black.types)
+
+wordcloud(words = df.black.text$word, freq = df.black.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.black.types$word, freq = df.black.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+red <- df[ which(df$colorIdentity =='R'), ]
+
+red.text <- Corpus(VectorSource(red$text))
+tdm.red.text <- TermDocumentMatrix(red.text)
+matrix.red.text <- as.matrix(tdm.red.text)
+count.red.text <- sort(rowSums(matrix.red.text), decreasing=TRUE)
+df.red.text <- data.frame(word = names(count.red.text), freq=count.red.text)
+
+red.types <- Corpus(VectorSource(red$types))
+tdm.red.types <- TermDocumentMatrix(red.types)
+matrix.red.types <- as.matrix(tdm.red.types)
+count.red.types <- sort(rowSums(matrix.red.types), decreasing=TRUE)
+df.red.types <- data.frame(word = names(count.red.types), freq=count.red.types)
+
+wordcloud(words = df.red.text$word, freq = df.red.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.red.types$word, freq = df.red.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+green <- df[ which(df$colorIdentity =='G'), ]
+
+green.text <- Corpus(VectorSource(green$text))
+tdm.green.text <- TermDocumentMatrix(green.text)
+matrix.green.text <- as.matrix(tdm.green.text)
+count.green.text <- sort(rowSums(matrix.green.text), decreasing=TRUE)
+df.green.text <- data.frame(word = names(count.green.text), freq=count.green.text)
+
+green.types <- Corpus(VectorSource(green$types))
+tdm.green.types <- TermDocumentMatrix(green.types)
+matrix.green.types <- as.matrix(tdm.green.types)
+count.green.types <- sort(rowSums(matrix.green.types), decreasing=TRUE)
+df.green.types <- data.frame(word = names(count.green.types), freq=count.green.types)
+
+wordcloud(words = df.green.text$word, freq = df.green.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.green.types$word, freq = df.green.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+
+colorless <- df[ which(df$colorIdentity =='X'), ]
+
+colorless.text <- Corpus(VectorSource(colorless$text))
+tdm.colorless.text <- TermDocumentMatrix(colorless.text)
+matrix.colorless.text <- as.matrix(tdm.colorless.text)
+count.colorless.text <- sort(rowSums(matrix.colorless.text), decreasing=TRUE)
+df.colorless.text <- data.frame(word = names(count.colorless.text), freq=count.colorless.text)
+
+colorless.types <- Corpus(VectorSource(colorless$types))
+tdm.colorless.types <- TermDocumentMatrix(colorless.types)
+matrix.colorless.types <- as.matrix(tdm.colorless.types)
+count.colorless.types <- sort(rowSums(matrix.colorless.types), decreasing=TRUE)
+df.colorless.types <- data.frame(word = names(count.colorless.types), freq=count.colorless.types)
+
+wordcloud(words = df.colorless.text$word, freq = df.colorless.text$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+
+wordcloud(words = df.colorless.types$word, freq = df.colorless.types$freq, min.freq = 1,
+          max.words=200, random.order=FALSE, rot.per=0.35, 
+          colors=brewer.pal(8, "Dark2"))
+```
