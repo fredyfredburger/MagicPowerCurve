@@ -21,6 +21,16 @@ For this project, I started by downloading the data from mtgjson.com and doing e
 
 For additinal exploritory analysis, I used Rapid Miner to run multiple algorithms against the data.  This provided a quick view of the expected end results of the project, providing a shortcut to ensure the project would provide useful results.
 
+![image](https://user-images.githubusercontent.com/35434572/123181282-0a9b6280-d45b-11eb-8840-f6f3a0a8052b.png)
+![image](https://user-images.githubusercontent.com/35434572/123181305-14bd6100-d45b-11eb-8dcc-9ba144f6d42d.png)
+
+Finally, I loaded the data into R and used a general linear model and random forrest model to create predictive algorithms for determining the cost of a simple creature spell.  The 
+
+
+
+High: 8
+Actual: 88
+Low: 589
 
 
 # Future Research
