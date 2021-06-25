@@ -1,7 +1,7 @@
 # MagicPowerCurve
 MSDS692 Data Science Practicum
 Author: "Frederick Pletz"
-
+YouTube Presentation: https://youtu.be/-YGfAKSknOQ
 
 # Introduction
 This project analyzes Magic the Gathering (MtG) card data to identify the power curve for MtG chreatures.  Additionally, the creature types and keyword abilities are visualized to compare with the MtG color wheel.
